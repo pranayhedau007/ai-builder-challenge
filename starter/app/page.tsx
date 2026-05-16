@@ -72,21 +72,14 @@ export default function HomePage() {
       </section>
 
       <section className="bg-amber-50 border border-amber-200 rounded-lg p-5">
-        <h2 className="text-lg font-semibold">Before you start</h2>
-        <ol className="list-decimal ml-5 mt-2 space-y-1 text-sm text-gray-700">
+        <h2 className="text-lg font-semibold">Developer tools</h2>
+        <ul className="mt-2 space-y-1 text-sm text-gray-700">
           <li>
-            Make sure the API is running (<code>pnpm dev</code> from the
-            monorepo root brings up both).
+            <Link className="text-blue-700 hover:underline" href="/dev/barcodes">
+              /dev/barcodes — printable barcode sheet for scan testing
+            </Link>
           </li>
-          <li>
-            Read <code>starter/docs/api-reference.md</code> and{" "}
-            <code>starter/docs/tips.md</code>.
-          </li>
-          <li>
-            Read the full brief at <code>docs/CHALLENGE.md</code> in the
-            monorepo.
-          </li>
-        </ol>
+        </ul>
       </section>
     </div>
   );
