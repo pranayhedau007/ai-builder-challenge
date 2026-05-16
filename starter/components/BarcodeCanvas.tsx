@@ -1,14 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-// bwip-js types aren't resolved in bundler mode; import via path
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const bwipjs = require("bwip-js/dist/bwip-js.js") as {
-  toCanvas: (
-    canvas: HTMLCanvasElement,
-    options: { bcid: string; text: string; scale?: number; height?: number; includetext?: boolean; textxalign?: string },
-  ) => void;
-};
+import bwipjs from "bwip-js/browser";
 
 interface BarcodeCanvasProps {
   text: string;

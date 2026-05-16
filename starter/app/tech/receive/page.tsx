@@ -73,6 +73,16 @@ export default function ReceivePage() {
 
     try {
       const existing = await api.assets.get(tag);
+      // Disposed is always a hard stop — check before the idempotent duplicate path
+      if (existing.state === "disposed") {
+        setStep({
+          kind: "error",
+          tag,
+          title: "Asset disposed",
+          message: "This asset has been disposed. No scans are accepted.",
+        });
+        return;
+      }
       // Asset exists — auto-POST the receive to log the duplicate_receive event
       // and collect the canonical idempotent response
       const result = await api.scans.receive({
