@@ -4,6 +4,8 @@ import { reconcileAssets } from "@/lib/reconcile";
 import type { ReconcileCategory } from "@/lib/reconcile";
 import type { EventType, Event } from "@/lib/types";
 import { AssetListClient } from "@/components/AssetListClient";
+import { AttentionRequired } from "@/components/AttentionRequired";
+import type { AttentionItem } from "@/components/AttentionRequired";
 
 const EVENT_LABELS: Record<EventType, string> = {
   receive: "Received",
@@ -15,12 +17,6 @@ const EVENT_LABELS: Record<EventType, string> = {
   duplicate_receive: "Re-scanned",
   transfer_custody: "Transferred",
 };
-
-const ATTENTION_LABELS = {
-  drift: "Location conflict",
-  stalled_received: "Stalled receiving",
-  orphan: "Missing rack record",
-} as const;
 
 function formatActivityTime(iso: string): string {
   const date = new Date(iso);
@@ -54,15 +50,10 @@ export default async function ManagerPage() {
 
   // ── Attention required ────────────────────────────────────────────────────
 
-  type AttentionItem = {
-    kind: "drift" | "stalled_received" | "orphan";
-    asset_tag: string;
-    model: string;
-    context: string;
-  };
-
   const attentionItems: AttentionItem[] = [];
 
+  // Drift first — location conflicts are the most operationally urgent and
+  // must be visually dominant above the (potentially larger) stalled list.
   for (const item of reconcile.items.filter((i) => i.category === "drift")) {
     attentionItems.push({
       kind: "drift",
@@ -72,21 +63,30 @@ export default async function ManagerPage() {
     });
   }
 
-  for (const asset of assets) {
-    if (
-      asset.state === "received" &&
-      now.getTime() - new Date(asset.updated_at).getTime() > SEVEN_DAYS_MS
-    ) {
-      const days = Math.floor(
-        (now.getTime() - new Date(asset.updated_at).getTime()) / (1000 * 60 * 60 * 24),
-      );
-      attentionItems.push({
-        kind: "stalled_received",
-        asset_tag: asset.asset_tag,
-        model: asset.model,
-        context: `${days} days in receiving`,
-      });
-    }
+  // Stalled receiving: sorted oldest-first (ascending updated_at).
+  // The manager's job here is escalation — the longest-waiting asset is the
+  // most overdue, so it earns the top slot.
+  const stalledAssets = assets
+    .filter(
+      (a) =>
+        a.state === "received" &&
+        now.getTime() - new Date(a.updated_at).getTime() > SEVEN_DAYS_MS,
+    )
+    .sort(
+      (a, b) =>
+        new Date(a.updated_at).getTime() - new Date(b.updated_at).getTime(),
+    );
+
+  for (const asset of stalledAssets) {
+    const days = Math.floor(
+      (now.getTime() - new Date(asset.updated_at).getTime()) / (1000 * 60 * 60 * 24),
+    );
+    attentionItems.push({
+      kind: "stalled_received",
+      asset_tag: asset.asset_tag,
+      model: asset.model,
+      context: `${days} days in receiving`,
+    });
   }
 
   for (const item of reconcile.items.filter((i) => i.category === "orphan_in_operations")) {
@@ -137,10 +137,19 @@ export default async function ManagerPage() {
 
   // ── Asset list data ───────────────────────────────────────────────────────
 
-  const nonCleanItems = reconcile.items.filter((i) => i.category !== "clean");
-  const discrepancyTags = nonCleanItems.map((i) => i.asset_tag);
+  // has-discrepancy filter includes only actionable categories.
+  // expected_gap is explicitly excluded: it is normal (finance retires at close),
+  // non-actionable, and including it would flood the filter with ~50 false positives.
+  const ACTIONABLE: ReadonlySet<ReconcileCategory> = new Set([
+    "drift",
+    "ghost_in_facilities",
+    "orphan_in_operations",
+    "finance_lag",
+  ]);
+  const actionableItems = reconcile.items.filter((i) => ACTIONABLE.has(i.category));
+  const discrepancyTags = actionableItems.map((i) => i.asset_tag);
   const discrepancyCategories: Record<string, ReconcileCategory> = {};
-  nonCleanItems.forEach((i) => {
+  actionableItems.forEach((i) => {
     discrepancyCategories[i.asset_tag] = i.category;
   });
 
@@ -161,29 +170,7 @@ export default async function ManagerPage() {
         <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
           Attention required
         </h2>
-        {attentionItems.length === 0 ? (
-          <p className="text-sm text-gray-500 py-1">Nothing needs you right now.</p>
-        ) : (
-          <div className="rounded-lg border border-amber-200 bg-amber-50 divide-y divide-amber-100">
-            {attentionItems.map((item) => (
-              <Link
-                key={`${item.kind}-${item.asset_tag}`}
-                href={`/manager/assets/${item.asset_tag}`}
-                className="flex items-center gap-3 px-4 py-3 hover:bg-amber-100 transition-colors"
-              >
-                <span className="shrink-0 text-xs font-medium px-2 py-0.5 rounded-full bg-amber-200 text-amber-900">
-                  {ATTENTION_LABELS[item.kind]}
-                </span>
-                <span className="font-mono text-xs text-gray-600 w-20 shrink-0">
-                  {item.asset_tag}
-                </span>
-                <span className="text-sm text-gray-900 flex-1 truncate">{item.model}</span>
-                <span className="text-xs text-gray-500 shrink-0">{item.context}</span>
-                <span className="text-gray-400 shrink-0">→</span>
-              </Link>
-            ))}
-          </div>
-        )}
+        <AttentionRequired items={attentionItems} />
       </section>
 
       {/* Activity since yesterday — above the fold */}

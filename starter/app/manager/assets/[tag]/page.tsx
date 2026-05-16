@@ -116,6 +116,24 @@ export default async function AssetDetailPage({
   const reconcile = categorizeAsset(asset, facRecord, finRecord);
   const opsLocStr = asset.location.rack ? formatLocation(asset.location) : null;
 
+  // Cross-system conflict flags — same amber pattern as the reconcile page's location row.
+  const facRack = facRecord?.rack_location ?? null;
+  // Location conflict: both systems have a value but they differ
+  const locationConflict = !!opsLocStr && !!facRack && opsLocStr !== facRack;
+  // Orphan: ops says deployed but fac has no rack record
+  const orphanFac = asset.state === "in_service" && !facRecord;
+  // Ghost: ops says stored/received but fac still has a rack entry
+  const ghostFac =
+    (asset.state === "stored" || asset.state === "received") && !!facRecord;
+  // Finance lag: in service but not yet capitalized
+  const finLag =
+    asset.state === "in_service" &&
+    !!finRecord &&
+    finRecord.status !== "capitalized";
+  // Expected gap: disposed/rma but finance still carries it
+  const finExpectedGap =
+    (asset.state === "disposed" || asset.state === "rma_pending") && !!finRecord;
+
   return (
     <div className="space-y-8">
       {/* Back link */}
@@ -185,7 +203,7 @@ export default async function AssetDetailPage({
         </div>
       </div>
 
-      {/* Cross-system comparison */}
+      {/* Cross-system comparison — amber ≠ marks diverging fields, matching reconcile page pattern */}
       <div>
         <h2 className="text-base font-semibold text-gray-800 mb-3">
           Cross-system view
@@ -200,7 +218,10 @@ export default async function AssetDetailPage({
               <p>
                 <span className="text-gray-500">State</span>
                 <br />
-                <span className="font-medium">{STATE_LABELS[asset.state]}</span>
+                <span className={`font-medium ${finExpectedGap ? "text-amber-700" : ""}`}>
+                  {finExpectedGap && "≠ "}
+                  {STATE_LABELS[asset.state]}
+                </span>
               </p>
               <p>
                 <span className="text-gray-500">Custodian</span>
@@ -210,7 +231,10 @@ export default async function AssetDetailPage({
               <p>
                 <span className="text-gray-500">Location</span>
                 <br />
-                <span className="font-medium">{opsLocStr ?? "—"}</span>
+                <span className={`font-medium ${(locationConflict || orphanFac) ? "text-amber-700" : ""}`}>
+                  {(locationConflict || orphanFac) && "≠ "}
+                  {opsLocStr ?? "—"}
+                </span>
               </p>
             </div>
           </div>
@@ -225,7 +249,10 @@ export default async function AssetDetailPage({
                 <p>
                   <span className="text-gray-500">Rack</span>
                   <br />
-                  <span className="font-medium">{facRecord.rack_location}</span>
+                  <span className={`font-medium ${(locationConflict || ghostFac) ? "text-amber-700" : ""}`}>
+                    {(locationConflict || ghostFac) && "≠ "}
+                    {facRecord.rack_location}
+                  </span>
                 </p>
                 <p>
                   <span className="text-gray-500">Last observed</span>
@@ -234,7 +261,9 @@ export default async function AssetDetailPage({
                 </p>
               </div>
             ) : (
-              <p className="text-sm text-gray-400 italic">No record</p>
+              <p className={`text-sm italic ${orphanFac ? "text-amber-700 font-medium" : "text-gray-400"}`}>
+                {orphanFac && "≠ "}No record
+              </p>
             )}
           </div>
 
@@ -248,7 +277,10 @@ export default async function AssetDetailPage({
                 <p>
                   <span className="text-gray-500">Status</span>
                   <br />
-                  <span className="font-medium">{finRecord.status}</span>
+                  <span className={`font-medium ${(finLag || finExpectedGap) ? "text-amber-700" : ""}`}>
+                    {(finLag || finExpectedGap) && "≠ "}
+                    {finRecord.status}
+                  </span>
                 </p>
                 <p>
                   <span className="text-gray-500">Book value</span>
