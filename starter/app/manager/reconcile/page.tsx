@@ -25,13 +25,13 @@ const CATEGORY_DESCRIPTIONS: Record<
   },
   ghost_in_facilities: {
     summary:
-      "Facilities shows this asset in a rack, but operations says it's in storage or receiving.",
+      "Facilities has this asset in a rack, but operations either disagrees about the state or doesn't have it on record at all.",
     action:
       "Walk the physical location, then update whichever system has it wrong.",
   },
   orphan_in_operations: {
     summary:
-      "Operations shows this asset deployed, but facilities has no rack record for it.",
+      "Operations shows this asset deployed (or has no record of it), but facilities has no rack assignment.",
     action:
       "Confirm where it's racked physically, then file the missing facilities entry.",
   },
