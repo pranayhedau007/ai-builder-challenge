@@ -12,8 +12,13 @@ export type ReconcileItem = {
   asset_tag: string;
   model: string;
   manufacturer: string;
+  // "unreceived" used as sentinel when there is no ops record at all
   state: string;
   category: ReconcileCategory;
+  // Additional categories this asset also matches, in priority order.
+  // An asset belongs to its primary category for headline counts;
+  // secondaryFlags are shown as inline tags on the report row.
+  secondaryFlags: ReconcileCategory[];
   ops_location: string | null;
   facilities_location: string | null;
   finance_status: string | null;
@@ -37,12 +42,62 @@ export function buildOpsLocation(asset: Asset): string | null {
   return [site, room, row, rack, ru].filter(Boolean).join("/");
 }
 
+// categorizeAsset accepts a nullable asset to handle records that exist in
+// facilities or finance but have no corresponding ops entry. We union IDs
+// across all three sources in reconcileAssets rather than iterating ops-first,
+// so stray fac/fin records surface instead of being silently dropped.
 export function categorizeAsset(
-  asset: Asset,
+  asset: Asset | null,
   facRecord: FacilitiesRecord | undefined,
   finRecord: FinanceRecord | undefined,
   now: Date = new Date(),
 ): ReconcileItem {
+  // ── No ops record: asset known only to fac or finance ──────────────────────
+  if (asset === null) {
+    const facLoc = facRecord?.rack_location ?? null;
+    const finStatus = finRecord?.status ?? null;
+    const bookValue = finRecord?.book_value_usd ?? null;
+
+    if (facRecord) {
+      // Facilities has it, ops does not — the strongest ghost variant: ops
+      // doesn't know this asset exists at all.
+      return {
+        asset_tag: facRecord.tagged_id,
+        model: "Unknown — no operations record",
+        manufacturer: "",
+        state: "unreceived",
+        category: "ghost_in_facilities",
+        secondaryFlags: finRecord ? ["expected_gap"] : [],
+        ops_location: null,
+        facilities_location: facLoc,
+        finance_status: finStatus,
+        book_value_usd: bookValue,
+        explanation: `Facilities shows this racked at ${facLoc}, but operations has no record of this asset tag. It may have been placed without scanning.`,
+        action:
+          "Walk the rack and identify the asset. If real, scan it into operations (receive → deploy).",
+      };
+    }
+
+    // Finance has it, ops and facilities do not — orphan variant with no ops
+    // record at all, not just a missing fac write-back.
+    return {
+      asset_tag: finRecord!.tag,
+      model: "Unknown — no operations record",
+      manufacturer: "",
+      state: "unreceived",
+      category: "orphan_in_operations",
+      secondaryFlags: [],
+      ops_location: null,
+      facilities_location: null,
+      finance_status: finStatus,
+      book_value_usd: bookValue,
+      explanation: `Finance has a record for this tag (status: ${finStatus ?? "unknown"}${bookValue != null ? `, value: $${bookValue.toLocaleString()}` : ""}), but operations has never recorded it. It may never have been scanned in.`,
+      action:
+        "Ask finance to confirm the asset was delivered. If so, receive and deploy it via operations.",
+    };
+  }
+
+  // ── Asset exists in ops ─────────────────────────────────────────────────────
   const opsLoc = buildOpsLocation(asset);
   const facLoc = facRecord?.rack_location ?? null;
   const finStatus = finRecord?.status ?? null;
@@ -59,18 +114,33 @@ export function categorizeAsset(
     book_value_usd: bookValue,
   };
 
-  // Drift: both systems have a location entry, but they disagree on where it is
+  // Collect secondary flags before evaluating the primary category.
+  // Ghost is secondary (never primary) for rma_pending/disposed assets — those
+  // states have their own primary category (expected_gap) and a stale fac entry
+  // is an expected side-effect of going to RMA/disposal, not the main issue.
+  const secondaryFlags: ReconcileCategory[] = [];
+  if (
+    (asset.state === "rma_pending" || asset.state === "disposed") &&
+    facLoc !== null
+  ) {
+    secondaryFlags.push("ghost_in_facilities");
+  }
+
+  // ── Primary: Drift ──────────────────────────────────────────────────────────
   if (asset.state === "in_service" && opsLoc && facLoc && opsLoc !== facLoc) {
     return {
       ...base,
       category: "drift",
+      secondaryFlags,
       explanation: `Operations shows this at ${opsLoc}, but facilities shows ${facLoc}. The asset was likely moved without updating one of the systems.`,
       action:
         "Walk the rack and confirm the physical location. Update whichever system is wrong.",
     };
   }
 
-  // Ghost in facilities: facilities has a rack entry but ops says it is in storage or receiving
+  // ── Primary: Ghost in facilities ────────────────────────────────────────────
+  // Only applies when ops says stored/received — rma_pending/disposed are
+  // handled as expected_gap (primary) with ghost as a secondary flag above.
   if (
     (asset.state === "stored" || asset.state === "received") &&
     facLoc !== null
@@ -78,32 +148,35 @@ export function categorizeAsset(
     return {
       ...base,
       category: "ghost_in_facilities",
+      secondaryFlags,
       explanation: `Facilities shows this at ${facLoc}, but operations says it is ${asset.state === "stored" ? "in storage" : "in receiving"}. Someone likely moved it out of the rack without scanning.`,
       action:
         "Confirm the asset is not racked. If correct, clear the facilities entry.",
     };
   }
 
-  // Orphan in operations: ops says deployed, facilities has no rack record
+  // ── Primary: Orphan in operations ───────────────────────────────────────────
   if (asset.state === "in_service" && facLoc === null) {
     return {
       ...base,
       category: "orphan_in_operations",
+      secondaryFlags,
       explanation: `Operations shows this deployed${opsLoc ? ` at ${opsLoc}` : ""}, but facilities has no rack record. A write-back may have failed when it was deployed.`,
       action:
         "Verify the asset is physically at the rack. If yes, add the facilities entry.",
     };
   }
 
-  // Finance lag: in_service but finance has not capitalized it yet, and it has been long enough
+  // ── Primary: Finance lag ────────────────────────────────────────────────────
   if (asset.state === "in_service" && finRecord && finStatus !== "capitalized") {
-    const deployedAt = new Date(asset.updated_at);
     const ageDays =
-      (now.getTime() - deployedAt.getTime()) / (1000 * 60 * 60 * 24);
+      (now.getTime() - new Date(asset.updated_at).getTime()) /
+      (1000 * 60 * 60 * 24);
     if (ageDays > FINANCE_LAG_THRESHOLD_DAYS) {
       return {
         ...base,
         category: "finance_lag",
+        secondaryFlags,
         explanation: `This asset has been in service for ${Math.floor(ageDays)} days, but finance still shows "${finStatus}" instead of capitalized. Usually resolves at billing close.`,
         action:
           "If it has been longer than one billing cycle, ask finance to confirm capitalization.",
@@ -111,7 +184,7 @@ export function categorizeAsset(
     }
   }
 
-  // Expected gap: ops shows disposed or rma_pending, finance still carries book value
+  // ── Primary: Expected gap ───────────────────────────────────────────────────
   if (
     (asset.state === "disposed" || asset.state === "rma_pending") &&
     finRecord &&
@@ -120,21 +193,24 @@ export function categorizeAsset(
     return {
       ...base,
       category: "expected_gap",
+      secondaryFlags,
       explanation: `This asset is ${asset.state === "disposed" ? "disposed" : "pending RMA"} in operations, but finance still carries it${bookValue != null ? ` at $${bookValue.toLocaleString()}` : ""} as "${finStatus}". Finance retires it at the next close.`,
       action:
         "No action needed now. Finance will update this at the next billing close.",
     };
   }
 
+  // ── Clean ───────────────────────────────────────────────────────────────────
   return {
     ...base,
     category: "clean",
+    secondaryFlags,
     explanation: "All systems agree.",
     action: "",
   };
 }
 
-const CATEGORY_RANK: Record<ReconcileCategory, number> = {
+export const CATEGORY_RANK: Record<ReconcileCategory, number> = {
   drift: 0,
   ghost_in_facilities: 1,
   orphan_in_operations: 2,
@@ -159,15 +235,32 @@ export function reconcileAssets(
     finByTag[f.tag] = f;
   });
 
-  const items = assets.map((asset) =>
+  const opsAssets: Record<string, Asset> = {};
+  assets.forEach((a) => {
+    opsAssets[a.asset_tag] = a;
+  });
+
+  // Union IDs across all three sources so that records present in fac or
+  // finance but absent from ops are categorized rather than silently dropped.
+  // If we only iterated ops-first, stray fac entries (C0000199) and stray
+  // finance entries (C0000113) would never appear in the report.
+  const allTags = new Set<string>([
+    ...assets.map((a) => a.asset_tag),
+    ...facilities.map((f) => f.tagged_id),
+    ...finance.map((f) => f.tag),
+  ]);
+
+  const items = [...allTags].map((tag) =>
     categorizeAsset(
-      asset,
-      facByTag[asset.asset_tag],
-      finByTag[asset.asset_tag],
+      opsAssets[tag] ?? null,
+      facByTag[tag],
+      finByTag[tag],
       now,
     ),
   );
 
+  // Counts use only the primary category — secondaryFlags do not increment
+  // any counter, so each asset is counted exactly once.
   const counts: Record<ReconcileCategory, number> = {
     drift: 0,
     ghost_in_facilities: 0,
