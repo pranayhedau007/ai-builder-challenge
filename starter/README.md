@@ -2,7 +2,7 @@
 
 ## Live URL
 
-`[deployed URL]`
+`[FILL IN AFTER VERCEL DEPLOY]`
 
 ## Run locally
 
@@ -62,8 +62,10 @@ The risk with multi-labeling: a manager scanning the Monday morning report sees 
 ## What I cut
 
 - **RMA and dispose scan screens** — marked out of scope in the brief. The state machine handles `rma_open`, `rma_receive_back`, and `dispose`; they appear in the event log on `/manager/assets/[tag]`.
-- **Batch operations** — each scan flow is single-asset. Batch would require a different UX contract (select list, confirm-all) that the brief doesn't ask for.
+- **Bulk scan mode** — the obvious next feature; we didn't build it. The brief's framing — 11pm, 40lb instrument, gloves — describes single-asset interactions. Bulk mode would optimize for a workflow that doesn't match the user we're designing for.
 - **Finance writedown escalation** — an `rma_pending + capitalized` asset stale for 90+ days is probably a writedown candidate, not just an expected gap. There is a `// TODO` comment at the relevant branch in `lib/reconcile.ts`. Out of scope here.
+- **Saved filter presets / shareable URLs** — a manager who runs the same view every Monday would benefit, but adding URL state without bookmarkable views is half a feature.
+- **CSV / Excel export** — the list page invites it. We didn't add it because exporting to a spreadsheet means losing the categorization work the report does.
 - **Camera retry UX** — camera permission errors show as inline amber text. No retry button. Works for the happy path; needs iteration for real deployment.
 
 ---
@@ -72,7 +74,7 @@ The risk with multi-labeling: a manager scanning the Monday morning report sees 
 
 **"A dozen of the seeded assets disagree across systems"** — the actual count is 5 assets with meaningful cross-system anomalies, plus 2 assets (C0000113, C0000199) that appear in finance or facilities with no operations record at all. The ID-union in `reconcileAssets` surfaces these by iterating all tags across all three sources rather than ops-first. The brief's "dozen" appears to be a draft-time estimate; worth knowing if the scorer is checking for exactly 12.
 
-**Hosted vs. self-hosted API** — the challenge email mentions a hosted API endpoint. The starter defaults to `http://localhost:8080/v1`. If evaluating against a shared hosted instance, set `API_BASE_URL` in `.env`. The proxy at `/api/upstream/*` works the same either way.
+**Hosted vs. self-hosted API** — the brief reads "a hosted API holds ~1,000 seeded assets," which initially suggested a Cerebras-hosted endpoint. The follow-up email clarified that candidates self-host the API. Worth tightening in the next version of the brief.
 
 **`in_transit` is not an API state** — the brief's Attention Required section mentions "assets in in_transit with no recent activity." This state does not exist: the canonical enum is `unreceived | received | stored | in_service | rma_pending | disposed` (verified in `api/src/domain/types.ts` and the state machine table in `docs/api-reference.md`). The dashboard covers the underlying concern with a "Stalled receiving" category: assets in `received` state for more than 7 days.
 
@@ -105,3 +107,7 @@ Run with `pnpm test` from `starter/`.
 **`test/ScanInput.test.tsx`** — 3 cases: fires on Enter with trimmed value, ignores empty submission, clears after firing.
 
 End-to-end coverage is provided by `docs/happy-path.md`. Run it manually with `POST /v1/reset` between scenarios.
+
+---
+
+Built by Pranay Hedau · github.com/pranayhedau007
