@@ -185,6 +185,11 @@ export function categorizeAsset(
   }
 
   // ── Primary: Expected gap ───────────────────────────────────────────────────
+  // Classification is state-based only — any rma_pending + capitalized asset
+  // lands here regardless of how long it has been in that state.
+  // TODO: add a time dimension: rma_pending + capitalized beyond N days (e.g.
+  // 90) should escalate to a finance writedown candidate rather than staying
+  // quietly in expected_gap. Out of scope for this build but a real follow-up.
   if (
     (asset.state === "disposed" || asset.state === "rma_pending") &&
     finRecord &&
