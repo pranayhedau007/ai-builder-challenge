@@ -2,7 +2,11 @@
 
 ## Live URL
 
-`[FILL IN AFTER VERCEL DEPLOY]`
+https://ai-builder-challenge-starter-xi.vercel.app/
+
+## Loom walkthrough
+
+https://www.loom.com/share/e0aa1667449f4ff482c7f74ca0cdd19e
 
 ## Run locally
 
